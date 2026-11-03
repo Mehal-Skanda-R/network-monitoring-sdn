@@ -1,120 +1,195 @@
-# Network Monitoring and Alert System — Member 3 Package
+# Network Monitoring and Alert System — Question 6
 
-This package implements the **monitoring/detection logic** for Project 6. It is designed to be developed and tested on macOS using Python 3, without Mininet or third-party packages.
+A four-component Computer Networks project combining UDP host telemetry,
+Mininet/Open vSwitch, a Ryu SDN controller, flow-statistics monitoring and
+threshold-based alerting.
 
-## Scope
+## Architecture
 
-Included:
-- Calculate Mbps from successive SDN flow byte-counter samples.
-- Optionally calculate packets per second.
-- Raise configurable threshold alerts.
-- Handle the first sample, non-increasing timestamps, and counter resets.
-- Validate basic host telemetry fields.
-- Identify flows whose samples have become stale.
-- Local unit tests and a demonstration script.
+- **Member 1:** Mininet topology and Ryu controller; exports cumulative
+  OpenFlow flow counters over UDP and accepts explicit block/unblock commands.
+- **Member 2:** UDP telemetry agents, JSON protocol and central telemetry server.
+- **Member 3:** `monitoring/detector.py`; calculates Mbps/packets-per-second
+  from successive switch counters and generates threshold alerts.
+- **Member 4:** `integration/`; connects detector results, receives controller
+  flow-statistics datagrams and maintains integration documentation.
 
-Not included:
-- A UDP listener/server.
-- Mininet topology or OpenFlow controller.
-- Direct retrieval of switch statistics.
-- Automatic SDN flow modification or blocking.
-
-Those components belong to other team members and must be integrated and tested in the Ubuntu/Mininet environment. Do not claim end-to-end SDN functionality until it has been demonstrated there.
-
-## Files
+## Repository layout
 
 ```text
-monitoring/detector.py       Detection module
-tests/test_detector.py      Unit tests
-tests/demo_detector.py      Local sample demonstration
-docs/INTEGRATION.md         Interface contract for teammates
+controller/       Ryu OpenFlow 1.3 controller
+mininet/          Two-switch/four-host Mininet topology
+telemetry/        UDP agent, server and JSON protocol
+monitoring/       Traffic-rate detector
+integration/      Detector pipeline and flow-statistics UDP receiver
+tests/            Unit tests for detector, telemetry and integration
+docs/             Setup, message format, integration, testing and demo guides
 ```
 
-## Run locally on macOS
+## Network and port plan
 
-Check Python:
+All processes below are expected to run on the same Ubuntu VM except that
+host telemetry agents/server run inside Mininet host namespaces.
+
+| Purpose | Transport | Address/port |
+|---|---|---|
+| Ryu OpenFlow listener | TCP | `127.0.0.1:6653` |
+| Controller flow-statistics export | UDP | `127.0.0.1:9998` |
+| Host telemetry server in Mininet h4 | UDP | `10.0.0.4:9999` |
+| Controller block/unblock listener | UDP | `127.0.0.1:10000` |
+
+The controller control port is deliberately different from the host telemetry
+port. The telemetry server runs inside Mininet host `h4`, so its UDP port 9999
+does not conflict with the controller process in the Ubuntu root namespace.
+
+## Local tests (macOS or Linux)
+
+From the repository root:
 
 ```bash
-python3 --version
+python3 -m unittest discover -s tests -v
+python3 -m compileall -q controller mininet monitoring telemetry integration tests
 ```
 
-From the project root:
+The detector, telemetry, pipeline and statistics-receiver unit tests do not
+require Mininet or Ryu. During this integration pass, all **22 tests passed**.
+This is local Python verification only; it is not an end-to-end Mininet test.
+
+## Ubuntu/Mininet setup
+
+Use the team's Ubuntu VM. Mininet and Open vSwitch require Linux networking
+features and should not be run natively on macOS.
+
+Install system packages:
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_detector.py' -v
-python3 tests/demo_detector.py
+sudo apt update
+sudo apt install -y mininet openvswitch-switch iproute2 iperf git python3 python3-venv
 ```
 
-No `pip install` is required. The code uses the Python standard library.
+Create a virtual environment for Ryu and install the pinned controller dependency:
 
-## Flow-statistics input contract
-
-The SDN/controller adapter should call `NetworkDetector.process_flow_stats()` with one dictionary per flow sample:
-
-```python
-{
-    "switch": "s1",
-    "flow_id": "h1-to-h2",
-    "byte_count": 400000,
-    "packet_count": 600,
-    "timestamp": 102.0
-}
+```bash
+python3 -m venv ryu-venv
+source ryu-venv/bin/activate
+pip install --upgrade pip wheel
+pip install -r requirements-controller.txt
 ```
 
-- `byte_count` and `packet_count` are cumulative counters from the switch, not per-interval deltas.
-- `timestamp` is a Unix timestamp in seconds. Samples for a given flow must use the same clock and increasing timestamps.
-- The first sample establishes a baseline. A second valid sample is required to calculate a rate.
-- `switch` plus `flow_id` identifies the counter stream.
-- The example `timestamp` values in tests are synthetic; production code should use real timestamps.
+**Compatibility note:** Ryu 4.34 is an older release. Confirm that it installs
+and starts under the Python version in the team's Ubuntu VM before the final
+demo. Do not change the controller version independently of the team.
 
-Example:
+### Terminal 1 — Start Ryu
 
-```python
-from monitoring.detector import NetworkDetector
+From the repository root, with `ryu-venv` activated:
 
-detector = NetworkDetector(max_mbps=5.0)
-result = detector.process_flow_stats(flow_stats_dict)
-print(result)
+```bash
+ryu-manager --ofp-tcp-listen-port 6653 controller/monitoring_controller.py
 ```
 
-The result includes `mbps`, `packets_per_second`, `alerts`, and an explanatory `note` where a rate cannot yet be calculated.
+### Terminal 2 — Start the flow-statistics receiver
 
-## Rate calculation
-
-For two samples from the same flow:
-
-`Mbps = (change in bytes × 8) / elapsed seconds / 1,000,000`
-
-`Packets per second = change in packets / elapsed seconds`
-
-The threshold values are configuration choices for the demonstration, not universal definitions of abnormal traffic. Tune them to the topology and traffic generated.
-
-## Host telemetry contract
-
-The UDP server can pass a decoded telemetry dictionary to `process_telemetry()`:
-
-```python
-{
-    "host": "h1",
-    "timestamp": 1792842000.0,
-    "bytes_sent": 9600,
-    "packets_sent": 120
-}
+```bash
+python3 -m integration.stats_receiver --port 9998
 ```
 
-The current implementation validates and normalizes this data; it does not infer switch traffic rates from host-reported counts. Actual network rates must use SDN flow counters.
+For an isolated lab demonstration of temporary dynamic blocking, use the
+explicit opt-in mode:
 
-## Suggested team integration
+```bash
+python3 -m integration.stats_receiver --port 9998 --auto-block --block-seconds 10
+```
 
-1. Member 2's UDP server receives and decodes telemetry JSON.
-2. Member 2 or Member 4 passes telemetry to `process_telemetry()`.
-3. Member 1's controller adapter obtains switch flow counters.
-4. Member 4 connects the controller output to `process_flow_stats()`.
-5. The application displays returned rates and alerts.
-6. The team tests it on Mininet and documents actual outputs.
+Auto-block mode sends a block command only for a HIGH Mbps alert with an
+IPv4 source address, then requests an unblock after the configured duration.
+Use it only in the isolated Mininet lab. Verify the actual OpenFlow rule and
+traffic effect; a log message alone is not proof of enforcement.
 
-See `docs/INTEGRATION.md` for the agreed interface and ownership boundaries.
+### Terminal 3 — Start Mininet
 
-## Known limitation
+```bash
+sudo mn -c
+sudo python3 mininet/topology.py
+```
 
-Threshold alerts are detection only. They do **not** change OpenFlow rules or block traffic. Dynamic SDN action must be implemented by the controller/integration owner and demonstrated separately to satisfy the rubric's dynamic-SDN criterion.
+At the Mininet prompt:
+
+```text
+pingall
+```
+
+The topology uses `h1`–`h4` with addresses `10.0.0.1`–`10.0.0.4`, switches
+`s1` and `s2`, and a 10 Mbps / 5 ms inter-switch link.
+
+### Start host telemetry inside Mininet
+
+At the Mininet prompt, start the telemetry server inside `h4`:
+
+```text
+h4 python3 -m telemetry.server --bind 0.0.0.0 --port 9999 --detector &
+```
+
+Start agents on the other hosts:
+
+```text
+h1 python3 -m telemetry.agent --host h1 --iface h1-eth0 --server 10.0.0.4 --port 9999 &
+h2 python3 -m telemetry.agent --host h2 --iface h2-eth0 --server 10.0.0.4 --port 9999 &
+h3 python3 -m telemetry.agent --host h3 --iface h3-eth0 --server 10.0.0.4 --port 9999 &
+```
+
+If the Python package is not found inside a Mininet host, check the current
+working directory and Python path from that host. The repository directory
+must be visible inside each host namespace.
+
+## Generate traffic and inspect results
+
+At the Mininet prompt, use ping for connectivity and `iperf`/`iperf3` where
+available to generate traffic between hosts. Generate traffic across the
+inter-switch link to exercise the configured bottleneck.
+
+The flow-statistics receiver logs samples and detector rates. The first sample
+for each flow establishes a baseline; subsequent samples are required to
+calculate rates. Tune `NetworkDetector(max_mbps=...)` to the experiment and
+record the selected threshold in the report.
+
+## Dynamic SDN response
+
+The Ryu controller accepts these local UDP JSON commands on port 10000:
+
+```json
+{"action": "block_ip", "ip": "10.0.0.1"}
+{"action": "unblock_ip", "ip": "10.0.0.1"}
+```
+
+The optional receiver `--auto-block` mode connects a HIGH Mbps alert with
+the source IP carried by an IPv4 flow-statistics sample to the controller.
+The controller installs a higher-priority source-IP drop rule and later
+removes its own matching rule when the timed unblock command arrives.
+
+This behavior must be verified in Mininet by checking the OpenFlow rules and
+measuring the affected traffic. Do not claim it has been demonstrated until
+the team has run that test.
+
+## Evaluation and submission evidence
+
+The team still needs to execute and document:
+- Mininet startup and switch/controller connection.
+- `pingall` and multi-host UDP telemetry.
+- Actual switch-flow samples and calculated rates.
+- Normal and above-threshold traffic cases.
+- Dynamic block/unblock behavior and recovery.
+- Performance comparison against a clearly defined baseline.
+- Screenshots, exact commands, measured results and environment versions.
+
+Do not invent performance values or mark unrun tests as passed. See
+`docs/TESTING_GUIDE.md` and `docs/DEMO_GUIDE.md`.
+
+## Important limitations
+
+- Host telemetry counters are informational; traffic-rate detection uses
+  cumulative SDN switch flow counters.
+- The detector's first sample is a baseline, not an alert.
+- Dynamic blocking is optional at receiver startup and must be verified.
+- Full Mininet/Ryu end-to-end operation has not been verified by the local
+  Python unit tests.

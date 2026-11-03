@@ -1,4 +1,3 @@
-cat > controller/monitoring_controller.py <<'PY'
 """
 Member 1: Ryu SDN controller.
 
@@ -15,7 +14,7 @@ Statistics destination:
 
 Control destination:
     CONTROL_HOST (default 127.0.0.1)
-    CONTROL_PORT (default 9999)
+    CONTROL_PORT (default 10000)
 
 The statistics receiver is an integration adapter owned by the team.
 It is not Member 2's host-telemetry server.
@@ -40,6 +39,7 @@ from ryu.lib import hub
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ether_types
+from ryu.lib.packet import ipv4
 
 
 class MonitoringController(app_manager.RyuApp):
@@ -66,7 +66,7 @@ class MonitoringController(app_manager.RyuApp):
             "CONTROL_HOST", "127.0.0.1"
         )
         self.control_port = int(os.getenv(
-            "CONTROL_PORT", "9999"
+            "CONTROL_PORT", "10000"
         ))
 
         self.stats_socket = socket.socket(
@@ -200,10 +200,20 @@ class MonitoringController(app_manager.RyuApp):
 
         # Install a forwarding rule for known destinations.
         if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(
-                in_port=in_port,
-                eth_dst=dst
-            )
+            ip_pkt = pkt.get_protocol(ipv4.ipv4)
+            if ip_pkt is not None:
+                match = parser.OFPMatch(
+                    in_port=in_port,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ipv4_src=ip_pkt.src,
+                    ipv4_dst=ip_pkt.dst,
+                    eth_dst=dst
+                )
+            else:
+                match = parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst
+                )
 
             self.add_flow(
                 datapath,
@@ -280,7 +290,9 @@ class MonitoringController(app_manager.RyuApp):
                 "flow_id": flow_id,
                 "byte_count": int(stat.byte_count),
                 "packet_count": int(stat.packet_count),
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "ipv4_src": match_data.get("ipv4_src"),
+                "ipv4_dst": match_data.get("ipv4_dst")
             }
 
             try:
@@ -403,4 +415,3 @@ class MonitoringController(app_manager.RyuApp):
             datapath.send_msg(delete_request)
 
         self.logger.info("Unblock rule requested for %s", ip)
-PY

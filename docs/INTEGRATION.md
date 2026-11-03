@@ -1,97 +1,47 @@
-# Integration contract for team members
+# Integration guide
 
-This document defines how the detection module can connect to the UDP server and SDN controller.
+## Detector return contract
 
-## 1. Ownership
+`NetworkDetector.process_flow_stats()` and `process_telemetry()` return a
+result dictionary. The result contains an `alerts` list. The pipeline preserves
+the full result and calls `on_alert` only for dictionaries inside that list.
+A baseline sample and ordinary telemetry with no alert must not trigger the
+callback.
 
-- **Member 1:** Mininet topology, controller, OpenFlow connection, flow-statistics retrieval and any dynamic SDN action.
-- **Member 2:** UDP telemetry agent/server and message decoding.
-- **Member 3:** `monitoring/detector.py`, threshold logic, tests and performance-analysis support.
-- **Member 4:** Integrates modules, maintains the main run procedure and final repository documentation.
+## Flow statistics
 
-## 2. Controller → detector
+Ryu sends one JSON datagram per flow sample to `127.0.0.1:9998`. The receiver
+is `integration/stats_receiver.py`. It validates required fields and calls
+`MonitoringPipeline.handle_flow_stats()`.
 
-The controller adapter should supply a dictionary with these fields:
+Required fields: `switch`, `flow_id`, `byte_count`, `packet_count`, `timestamp`.
+The controller also exports `ipv4_src` and `ipv4_dst` when its flow match
+contains IPv4 addresses. Byte and packet counts are cumulative counters.
 
-| Field | Type | Required |
-|---|---|---|
-| `switch` | string | Yes |
-| `flow_id` | string | Yes |
-| `byte_count` | non-negative integer | Yes |
-| `packet_count` | non-negative integer | Recommended |
-| `timestamp` | Unix timestamp in seconds | Recommended |
+## Host telemetry
 
-Call:
+Member 2's UDP telemetry server receives messages on UDP port 9999. In the
+Mininet run configuration, the server runs inside `h4` (10.0.0.4) and agents
+on `h1`–`h3` send to that address. The optional `--detector` mode routes
+telemetry through `MonitoringPipeline` and prints only actual alert entries.
 
-```python
-result = detector.process_flow_stats(flow_sample)
-```
+## Dynamic SDN control
 
-The controller's counters are cumulative. Do not pass interval deltas as `byte_count` or the detector will calculate an incorrect rate.
+The controller control listener uses UDP port 10000. The statistics receiver
+can optionally send `block_ip` / `unblock_ip` commands when started with
+`--auto-block`. It only attempts a block for a HIGH Mbps alert with an
+IPv4 source address. Verify installed rules and traffic effects in Mininet.
 
-## 3. UDP server → detector
+## Port ownership
 
-After decoding a valid UDP JSON message, the server may call:
+| Component | UDP port |
+|---|---:|
+| Flow-statistics receiver | 9998 |
+| Telemetry server (inside h4) | 9999 |
+| Controller control listener (Ubuntu VM loopback) | 10000 |
 
-```python
-result = detector.process_telemetry(message)
-```
+## Verification status
 
-Expected keys: `host`, `timestamp`, `bytes_sent`, and `packets_sent`. The two count fields are optional, but the host identifier should be included.
-
-## 4. Alert handling
-
-Each returned alert is a dictionary containing:
-- `severity`
-- `source`
-- `metric`
-- `value`
-- `threshold`
-- `message`
-- `timestamp`
-
-The integration layer should log/display these alerts. It should not silently assume that an alert has changed network behavior.
-
-## 5. Integration test sequence
-
-1. Start the controller and Mininet topology in Ubuntu.
-2. Confirm switch connection and host reachability.
-3. Start the UDP server and agents.
-4. Verify the server receives messages from multiple hosts.
-5. Collect two or more flow-statistics samples for the same flow.
-6. Confirm Mbps is calculated from the change in byte counter over elapsed time.
-7. Generate normal traffic and record output.
-8. Generate a higher traffic rate and confirm the configured threshold alert.
-9. Demonstrate any controller-side action separately and verify its effect.
-10. Save real outputs and measurements for the final report.
-
-## 6. Mermaid mind map
-
-```mermaid
-mindmap
-  root((Network Monitoring))
-    Mininet and SDN
-      Topology
-      OpenFlow controller
-      Flow counters
-      Dynamic action
-    UDP telemetry
-      Host agents
-      UDP server
-      JSON messages
-    Detection module
-      Mbps calculation
-      Packets per second
-      Thresholds
-      Alerts
-    Evaluation
-      Normal traffic
-      High traffic
-      Baseline comparison
-      Results and screenshots
-    Submission
-      README
-      Run instructions
-      Architecture
-      Viva preparation
-```
+Local Python unit tests cover the detector, telemetry protocol/server/agent,
+and pipeline alert extraction. They do not test Ryu, Open vSwitch, Mininet,
+or actual dynamic rule enforcement. Those checks must be run in the Ubuntu VM.

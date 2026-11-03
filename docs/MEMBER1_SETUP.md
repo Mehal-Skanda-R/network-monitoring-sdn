@@ -1,4 +1,3 @@
-cat > docs/MEMBER1_SETUP.md <<'MD'
 # Member 1 - Ryu Controller and Mininet Topology
 
 ## Responsibilities
@@ -119,7 +118,7 @@ to NetworkDetector.process_flow_stats().
 The controller listens for JSON commands on:
 
     CONTROL_HOST=127.0.0.1
-    CONTROL_PORT=9999
+    CONTROL_PORT=10000
 
 Block an IPv4 source address:
 
@@ -144,7 +143,7 @@ The controller supports these environment variables:
 | FLOW_STATS_HOST | 127.0.0.1 | Statistics receiver address |
 | FLOW_STATS_PORT | 9998 | Statistics receiver UDP port |
 | CONTROL_HOST | 127.0.0.1 | Control listener address |
-| CONTROL_PORT | 9999 | Control listener UDP port |
+| CONTROL_PORT | 10000 | Control listener UDP port |
 
 Set matching values in the integration adapter.
 
@@ -173,4 +172,3 @@ The teammate running the Ubuntu/Mininet environment should verify:
 
 Do not claim end-to-end operation until the team has completed
 these tests in the target environment.
-MD

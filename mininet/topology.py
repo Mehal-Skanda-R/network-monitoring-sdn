@@ -1,7 +1,6 @@
-cat > mininet/topology.py <<'PY'
 #!/usr/bin/env python3
 
-"""
+r"""
 Member 1: Mininet topology for the Network Monitoring SDN project.
 
 Topology:
@@ -86,4 +85,3 @@ def run_network():
 
 if __name__ == "__main__":
     run_network()
-PY
